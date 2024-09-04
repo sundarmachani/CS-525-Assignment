@@ -1,6 +1,6 @@
-                                    Advanced Database Organization - Fall 2024
-                                                CS 525 - Group 39
-                                        Programming Assignment I: Storage Manager
+                                                        Advanced Database Organization - Fall 2024
+                                                                CS 525 - Group 39
+                                                        Programming Assignment I: Storage Manager
 Authors
 -----------------------------------------------------------------------------------------------------------------------------------------------------------------
                         Group - 39 
