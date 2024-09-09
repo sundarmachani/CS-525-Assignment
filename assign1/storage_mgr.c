@@ -104,10 +104,106 @@ RC destroyPageFile(char *fileName)
 
 // -------------------------------------  READ BLOCKS FROM DISC  ------------------------------------------------
 
-
-
-
-
-
-
 // -------------------------------------  WRITE BLOCKS TO A PAGE FILE -------------------------------------------
+RC writeBlock(int pageNum, SM_FileHandle *fHandle, SM_PageHandle memPage)
+{
+    // check if the pageNumber is legit
+    if (pageNum < 0 || pageNum >= fHandle->totalNumPages)
+    {
+        return RC_WRITE_FAILED; // return back error as page cannot be written
+    }
+    // seek to correct page based on page number
+    if (fseek(fHandle->mgmtInfo, pageNum * PAGE_SIZE, SEEK_SET != 0))
+    {
+        return RC_WRITE_FAILED; // return error as page cannot be written
+    }
+    // Write the page from memory (memPage) to the file
+    size_t writeResult = fwrite(memPage, sizeof(char), PAGE_SIZE, fHandle->mgmtInfo);
+    if (writeResult < PAGE_SIZE)
+    {
+        return RC_WRITE_FAILED; // Return error if writing fails
+    }
+    return RC_OK;
+}
+
+RC writeCurrentBlock(SM_FileHandle *fHandle, SM_PageHandle memPage)
+{
+    // Check if the currentPagePosition is legit
+    if (fHandle->curPagePos < 0 || fHandle->curPagePos >= fHandle->totalNumPages)
+    {
+        return RC_WRITE_FAILED; // Return error if current page is invalid
+    }
+
+    // Seek to the current block position based on CurrentPagePosition
+    if (fseek(fHandle->mgmtInfo, fHandle->curPagePos * PAGE_SIZE, SEEK_SET) != 0)
+    {
+        return RC_WRITE_FAILED; // Return error if seek fails
+    }
+
+    // Write the memory page(memPage) to the current position
+    size_t writeResult = fwrite(memPage, sizeof(char), PAGE_SIZE, fHandle->mgmtInfo);
+    if (writeResult < PAGE_SIZE)
+    {
+        return RC_WRITE_FAILED; // Return error if writing fails
+    }
+
+    return RC_OK; // Return success
+}
+
+RC appendEmptyBlock(SM_FileHandle *fHandle)
+{
+    // Create an empty page with '/0' bytes
+    SM_PageHandle emptyPage = (SM_PageHandle)calloc(PAGE_SIZE, sizeof(char));
+
+    if (emptyPage == NULL)
+    {
+        return RC_WRITE_FAILED; // Return error if page cannot be written due to memory allocation failure
+    }
+
+    // Move to the end of the file
+    if (fseek(fHandle->mgmtInfo, 0, SEEK_END) != 0)
+    {
+        free(emptyPage); // Free or erase the memory before returning
+        return RC_WRITE_FAILED;
+    }
+
+    // Writing the empty block (all zeros) to the file
+    size_t writeResult = fwrite(emptyPage, sizeof(char), PAGE_SIZE, fHandle->mgmtInfo);
+    if (writeResult < PAGE_SIZE)
+    {
+        free(emptyPage);        // Free the memory before returning
+        return RC_WRITE_FAILED; // Return error if writing fails
+    }
+
+    // Free or erase the allocated empty page after writing
+    free(emptyPage);
+
+    // Updating file's metadata: increment the total number of pages
+    fHandle->totalNumPages += 1;
+
+    return RC_OK;
+}
+
+RC ensureCapacity(int numberOfPages, SM_FileHandle *fHandle)
+{
+    // Check if the file already has the maximum numberOfPages
+    if (fHandle->totalNumPages >= numberOfPages)
+    {
+        return RC_OK; // Ok as no need of adding more pages
+    }
+
+    // Calculate number of additional pages can be taken
+    int additionalPages = numberOfPages - fHandle->totalNumPages;
+
+    // Append empty blocks to reach the value of additionalPages
+    for (int i = 0; i < additionalPages; i++)
+    {
+        RC result = appendEmptyBlock(fHandle);
+        if (result != RC_OK)
+        {
+            return result; // Return error if appending a block fails
+        }
+    }
+
+    return RC_OK;
+}

@@ -17,25 +17,33 @@ It includes functionalities for creating, opening, closing, and destroying page 
 Features
 -----------------------------------------------------------------------------------------------------------------------------------------------------------------
 File Handling Methods:
-createPageFile: Creates a new page file with an initial size of one page, filled with zero bytes. 
+createPageFile(): Creates a new page file with an initial size of one page, filled with zero bytes. 
                 Handled error - if "RC_FILE_NOT_FOUND: not able to create file","RC_WRITE_FAILED: if not able to create an empty page",
                                 "RC_WRITE_FAILED: if not able to add the created empty page to the file"
-openPageFile: Opens an existing page file and initializes a file handle with information about the file, 
+openPageFile(): Opens an existing page file and initializes a file handle with information about the file, 
               Handled errors - "RC_FILE_NOT_FOUND: if file not found",
               initialize - fHandle->fileName, fHandle->curPagePos, fHandle->totalNumPages, fHandle->mgmtInfo
-closePageFile: Closes an open page file,
+closePageFile(): Closes an open page file,
                Handled error - "RC_FILE_HANDLE_NOT_INIT: if fHandle->mgmtInfo is NULL".
                initialize - fHandle->mgmtInfo to NULL before exiting this function;
-destroyPageFile: Deletes a page file from the file system.
+destroyPageFile(): Deletes a page file from the file system.
                 Handled error - "RC_FILE_NOT_FOUND : if fileName is not found"
 
 Page Handling Methods:
-readBlock: Reads a specified block from the file into memory.
-writeBlock: Writes a block of memory to a specified location in the file.
-readFirstBlock, readPreviousBlock, readCurrentBlock, readNextBlock, readLastBlock: Methods for reading specific blocks based on position.
-writeCurrentBlock: Writes the current block in memory to the file.
-appendEmptyBlock: Appends an empty block to the end of the file.
-ensureCapacity: Ensures that the file has enough pages to accommodate the specified number.
+readBlock(): Reads a specified block from the file into memory.
+readFirstBlock(), readPreviousBlock(), readCurrentBlock(), readNextBlock(), readLastBlock(): Methods for reading specific blocks based on position.
+writeBlock: Writes a block of memory to a specific page number in the file by seeking to the correct file position and writing the block.
+            Handled error - (if the pageNumber is valid), (seek to correct page based on page number), (Write the page from memory (memPage) to the file)
+                             if any of these validation fails results in RC_WRITE_FAILED.
+writeCurrentBlock(): Writes a block to the current file position stored in the file handle’s curPagePos.
+                      Handled error - (if the currentPagePosition is legit), (Seek to the current block position based on CurrentPagePosition), 
+                      (Write the memory page(memPage) to the current position) if any of these validation fails results in RC_WRITE_FAILED.
+appendEmptyBlock(): Appends a zero-filled block at the end of the file, increasing the file size by one page.
+                    Handled error - (if Create an empty page with '/0' bytes is not succesful), (if not able to Move to the end of the file),
+                                     (if Writing the empty block (all zeros) to the file) any failure in these validations then RC_WRITE_FAILED.  
+ensureCapacity(): Ensures the file has enough pages by appending empty blocks if necessary.
+                  Handled error - Check if the file already has the maximum numberOfPages,  if succesful then RC_OK
+                                   check if we are able to Append empty blocks to reach the value of additionalPages, if failure then return ERROR.
 
 File Structure:
 -----------------------------------------------------------------------------------------------------------------------------------------------------------------
