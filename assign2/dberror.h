@@ -22,8 +22,7 @@ typedef int RC;
 #define RC_BUFFER_POOL_DATA_NOT_EXIST 8
 
 #define RC_PAGE_NOT_FOUND_IN_CACHE 400
-#define RC_FAIL_SHUTDOWN_POOL 401
-#define RC_SHUTDOWN_POOL_ERROR 402
+#define RC_SHUTDOWN_POOL_ERROR 401
 
 #define RC_RM_COMPARE_VALUE_OF_DIFFERENT_DATATYPE 200
 #define RC_RM_EXPR_RESULT_IS_NOT_BOOLEAN 201
@@ -36,8 +35,6 @@ typedef int RC;
 #define RC_IM_KEY_ALREADY_EXISTS 301
 #define RC_IM_N_TO_LAGE 302
 #define RC_IM_NO_MORE_ENTRIES 303
-
-#define RC_PAGE_NOT_FOUND 400
 
 /* holder for error messages */
 extern char *RC_message;

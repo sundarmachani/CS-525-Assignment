@@ -8,91 +8,85 @@
 
 typedef struct BufferPoolFrame
 {
-    int poolIndex;
-    int pageIndex;
-    struct BufferPoolFrame *next;
-    struct BufferPoolFrame *prev;
+    int indexpool;
+    struct BufferPoolFrame *nextFrame;
+    int indexpage;
+    struct BufferPoolFrame *prevFrame;
 } BufferPoolFrame;
 
-typedef struct BM_BufferPoolData
+typedef struct BPData
 {
-    int noOfAvailablePageFrames;
-    int noOfReadOperations;
-    int noOfWriteOperations;
+    int pageframesavailable;
+    int readoperations;
+    int writeoperations;
 
     //  page metadata
-    int *pageNumberList;
-    int *fixCounts;
-    bool *dirtyFlags;
-
-    // page data
-    char *poolData;
-
-    // clock
-    int *clockFlag;
+    int *listPageNo;
+    int *fixcounts;
+    bool *dirtyflag;
 
     // linked list for BufferPoolFrame
-    BufferPoolFrame *head, *current, *tail;
-} BM_BufferPoolData;
+    BufferPoolFrame *headFrame;
+    BufferPoolFrame *currentFrame;
+    BufferPoolFrame *endFrame;
+    // page data
+    char *BpoolData;
+
+} BPData;
 
 // Struct to maintain page access history
 typedef struct PageAccessHistory
 {
     int *accessTimes; // Store the last K access times
-    int count;        // Number of times the page has been accessed
+    int count;        // no. of times the page was accessed
 } PageAccessHistory;
 
-// Function prototypes
 RC ensureCapacity(int numberOfPages, SM_FileHandle *fHandle);
 RC readBlock(int pageNum, SM_FileHandle *fHandle, SM_PageHandle memPage);
 RC closePageFile(SM_FileHandle *fHandle);
-void pinPageInCacheForLRU(BM_BufferPool *bm, BM_PageHandle *page, PageNumber pageNum);
-int pinPageForFIFOLRU(BM_BufferPool *bm, BM_PageHandle *page, PageNumber pageNum, SM_FileHandle *fHandle);
-// int pinPageForCLOCK(BM_BufferPool *bm, BM_PageHandle *page, PageNumber pageNum);
-static PageNumber findPageInBuffer(BM_BufferPoolData *bufferPoolData, PageNumber targetPage, int numPages);
+void LRUCachePinPage(BM_BufferPool *bm, BM_PageHandle *page, PageNumber pageNum);
+int LRUpinPageFIFO(BM_BufferPool *bm, BM_PageHandle *page, PageNumber pageNum, SM_FileHandle *fHandle);
+static PageNumber findPageInBuffer(BPData *bufferPoolData, PageNumber thepage, int numPages);
+static BufferPoolFrame *findFirstUnfixedFrame(BPData *bufferPoolData);
+static void reorderFrames(BPData *bufferPoolData, BufferPoolFrame *temp);
+static void writeDirtyPageIfNeeded(BPData *bufferPoolData, SM_FileHandle *fileHandle);
+static void updateFrameWithNewPage(BPData *bufferPoolData, PageNumber pageNum);
 
 /**
- * Initializes the buffer pool data structure and allocates memory for all the
- * necessary data structures.
+ * This Function initalizes the buffer pool, then allocates memory
  */
-RC initializeBufferPoolData(BM_BufferPoolData *bm_bufferPoolData, int numPages)
+RC initBP(BPData *bpData, int numPages)
 {
-    bm_bufferPoolData->clockFlag = calloc(numPages * PAGE_SIZE, sizeof(int));
-    bm_bufferPoolData->dirtyFlags = malloc(numPages * sizeof(bool));
-    bm_bufferPoolData->pageNumberList = malloc(numPages * sizeof(int));
-    bm_bufferPoolData->poolData = calloc(numPages * PAGE_SIZE, sizeof(char));
-    bm_bufferPoolData->noOfAvailablePageFrames = numPages;
-    bm_bufferPoolData->fixCounts = calloc(numPages, sizeof(int));
+    bpData->dirtyflag = malloc(numPages * sizeof(bool));
+    bpData->listPageNo = malloc(numPages * sizeof(int));
+    bpData->BpoolData = calloc(numPages * PAGE_SIZE, sizeof(char));
+    bpData->pageframesavailable = numPages;
+    bpData->fixcounts = calloc(numPages, sizeof(int));
 
-    if (!bm_bufferPoolData->clockFlag || !bm_bufferPoolData->dirtyFlags ||
-        !bm_bufferPoolData->pageNumberList || !bm_bufferPoolData->poolData ||
-        !bm_bufferPoolData->fixCounts)
+    if (!bpData->dirtyflag || !bpData->listPageNo || !bpData->BpoolData || !bpData->fixcounts)
     {
         return RC_MEM_ALLOC_FAILURE;
     }
 
     // Initialize metadata
-    bm_bufferPoolData->head = NULL;
-    bm_bufferPoolData->current = NULL;
-    bm_bufferPoolData->tail = NULL;
-    bm_bufferPoolData->noOfReadOperations = 0;
-    bm_bufferPoolData->noOfWriteOperations = 0;
+    bpData->headFrame = NULL;
+    bpData->currentFrame = NULL;
+    bpData->endFrame = NULL;
+    bpData->readoperations = 0;
+    bpData->writeoperations = 0;
 
     for (int index = 0; index < numPages; index++)
     {
-        bm_bufferPoolData->pageNumberList[index] = NO_PAGE;
-        bm_bufferPoolData->dirtyFlags[index] = false;
+        bpData->listPageNo[index] = NO_PAGE;
+        bpData->dirtyflag[index] = false;
     }
 
     return RC_OK;
 }
 
 /**
- * Initialize the buffer pool. This function initializes the buffer pool data
- * structure and allocates memory for all the necessary data structures. It
- * also checks if the file specified by pageFileName exists and if the buffer
- * pool initialization is successful, it returns RC_OK. Otherwise, it returns
- * appropriate error code.
+ * Initializes the buffer pool, then allocates memory. Checks if the page file name exists,
+ * whether pool has initialized or not.
  */
 RC initBufferPool(BM_BufferPool *const bm, const char *const pageFileName,
                   const int numPages, ReplacementStrategy strategy,
@@ -117,15 +111,15 @@ RC initBufferPool(BM_BufferPool *const bm, const char *const pageFileName,
     bm->strategy = strategy;
 
     // Allocate memory for the buffer pool data structure
-    bm->mgmtData = calloc(1, sizeof(BM_BufferPoolData));
-    BM_BufferPoolData *bm_bufferPoolData = (BM_BufferPoolData *)bm->mgmtData;
+    bm->mgmtData = calloc(1, sizeof(BPData));
+    BPData *bm_bufferPoolData = (BPData *)bm->mgmtData;
 
     // Check if the allocation for the buffer pool data structure is successful
     if (!bm_bufferPoolData)
     {
         return RC_MEM_ALLOC_FAILURE;
     }
-    if (initializeBufferPoolData(bm_bufferPoolData, numPages) != RC_OK)
+    if (initBP(bm_bufferPoolData, numPages) != RC_OK)
     {
         free(bm_bufferPoolData); // Clean up on failure
         return RC_MEM_ALLOC_FAILURE;
@@ -134,65 +128,68 @@ RC initBufferPool(BM_BufferPool *const bm, const char *const pageFileName,
 }
 
 /**
- * Checks if there are any pinned pages in the buffer pool.
+ * Checks for pinned pages
  */
-bool hasPinnedPages(const BM_BufferPoolData *bufferPoolData, int numPages) {
-    for (int index = 0; index < numPages; index++) {
-        if (bufferPoolData->fixCounts[index] > 0) {
-            return true; // Found a pinned page
+bool hasPinnedPages(const BPData *bpData, int numPages)
+{
+    for (int index = 0; index < numPages; index++)
+    {
+        if (bpData->fixcounts[index] > 0)
+        {
+            return true; // Found pinned page
         }
     }
-    return false; // No pinned pages found
+    return false; // none found
 }
 
 /**
  * Frees all allocated memory for the buffer pool data.
  */
-void freeBufferPoolData(BM_BufferPoolData *bufferPoolData) {
-    free(bufferPoolData->pageNumberList);
-    free(bufferPoolData->fixCounts);
-    free(bufferPoolData->clockFlag);
-    free(bufferPoolData->poolData);
-    free(bufferPoolData->dirtyFlags);
+void freeBufferPoolData(BPData *bpData)
+{
+    free(bpData->listPageNo);
+    free(bpData->fixcounts);
+    free(bpData->BpoolData);
+    free(bpData->dirtyflag);
 
     // Reset pointers to NULL after freeing
-    bufferPoolData->pageNumberList = NULL;
-    bufferPoolData->fixCounts = NULL;
-    bufferPoolData->clockFlag = NULL;
-    bufferPoolData->poolData = NULL;
-    bufferPoolData->dirtyFlags = NULL;
+    bpData->listPageNo = NULL;
+    bpData->BpoolData = NULL;
+    bpData->dirtyflag = NULL;
 
     // Reset linked list pointers
-    bufferPoolData->head = NULL;
-    bufferPoolData->current = NULL;
-    bufferPoolData->tail = NULL;
+    bpData->headFrame = NULL;
+    bpData->currentFrame = NULL;
+    bpData->endFrame = NULL;
 
     // Reset operation counters
-    bufferPoolData->noOfReadOperations = 0;
-    bufferPoolData->noOfWriteOperations = 0;
+    bpData->readoperations = 0;
+    bpData->writeoperations = 0;
 }
 
-
 /**
- * Shuts down the buffer pool. This function checks for pinned pages,
- * flushes dirty pages to disk, and frees allocated memory for buffer pool data.
+ * Shut down buffer pool and flush dirty pages
  */
-RC shutdownBufferPool(BM_BufferPool *const bm) {
-    if (!bm) {
+RC shutdownBufferPool(BM_BufferPool *const bm)
+{
+    if (!bm)
+    {
         return RC_BUFFER_POOL_NOT_EXIST;
     }
 
-    BM_BufferPoolData *bufferPoolData = (BM_BufferPoolData *)bm->mgmtData;
-    if (!bufferPoolData) {
+    BPData *bpData = (BPData *)bm->mgmtData;
+    if (!bpData)
+    {
         return RC_BUFFER_POOL_DATA_NOT_EXIST;
     }
 
-    if (hasPinnedPages(bufferPoolData, bm->numPages)) {
+    if (hasPinnedPages(bpData, bm->numPages))
+    {
         return RC_SHUTDOWN_POOL_ERROR;
     }
 
     forceFlushPool(bm);
-    freeBufferPoolData(bufferPoolData);
+    freeBufferPoolData(bpData);
     free(bm->mgmtData);
     bm->mgmtData = NULL;
 
@@ -200,9 +197,8 @@ RC shutdownBufferPool(BM_BufferPool *const bm) {
 }
 
 /**
- * This function is used to force-flush the buffer pool, writing all dirty pages to disk.
- * It does this by iterating over each page in the buffer pool, checking if the page is dirty
- * and not fixed, and if so, writing the page to disk. It also resets the dirty flag for the page.
+ * Forcecully flush the buffer pool, write all dirty pages by iterating over each page in the buffer pool.
+ * If dirty and not fixed, write to disk. If not, reset the dirty flag.
  */
 RC forceFlushPool(BM_BufferPool *const bm)
 {
@@ -214,75 +210,71 @@ RC forceFlushPool(BM_BufferPool *const bm)
         return RC_FILE_NOT_FOUND;
     }
 
-    BM_BufferPoolData *bufferPoolData = (BM_BufferPoolData *)bm->mgmtData;
+    BPData *bpData = (BPData *)bm->mgmtData;
 
     // Iterate over each page in the buffer pool
     for (PageNumber pageNumber = 0; pageNumber < bm->numPages; pageNumber++)
     {
         // Check if the page is dirty (has been modified) and not fixed (pinned)
-        if (bufferPoolData->dirtyFlags[pageNumber] && bufferPoolData->fixCounts[pageNumber] == 0)
+        if (bpData->dirtyflag[pageNumber] && bpData->fixcounts[pageNumber] == 0)
         {
-            SM_PageHandle pageHandle = bufferPoolData->poolData + pageNumber * PAGE_SIZE * sizeof(char);
-            int actualPageIndex = bufferPoolData->pageNumberList[pageNumber];
+            SM_PageHandle pageHandle = bpData->BpoolData + pageNumber * PAGE_SIZE * sizeof(char);
+            int actualPageIndex = bpData->listPageNo[pageNumber];
             writeBlock(actualPageIndex, &fileHandle, pageHandle);
-            bufferPoolData->dirtyFlags[pageNumber] = false;
-            bufferPoolData->noOfWriteOperations++;
+            bpData->dirtyflag[pageNumber] = false;
+            bpData->writeoperations++;
         }
     }
 
-    // Close the page file
+    // Close page file
     closePageFile(&fileHandle);
 }
 
 /**
- * This function marks a page in the buffer pool as dirty.
- * A dirty page is a page that has been modified since it was brought into the buffer pool.
- * It takes in the buffer pool structure, a pointer to the page handle struct, and the page number.
- * It returns a success code (RC_OK) if the page is found in the buffer pool and marked as dirty.
- * If the page is not found in the buffer pool, it returns an error code (RC_PAGE_NOT_FOUND_IN_CACHE).
+ * Mark page in buffer pool as dirty. The function takes the buffer pool, points to the page handle struct and the page no.
+ * then returns a success code if found.
  */
 RC markDirty(BM_BufferPool *const bm, BM_PageHandle *const page)
 {
-    /* Check if the buffer pool or page handle is NULL. If so, return an error code. */
+    /* Checks if the buffer pool or page handle is NULL. */
     if (bm == NULL || page == NULL)
     {
         return RC_PAGE_NOT_FOUND_IN_CACHE;
     }
-    BM_BufferPoolData *bpd = (BM_BufferPoolData *)bm->mgmtData;
-    PageNumber targetPage = page->pageNum;
+    BPData *bpData = (BPData *)bm->mgmtData;
+    PageNumber tgtPage = page->pageNum;
 
     /* Find the page number in the buffer pool. */
-    PageNumber bufferPoolPageNumber = findPageInBuffer(bpd, targetPage, bm->numPages);
+    PageNumber bufferPoolPageNumber = findPageInBuffer(bpData, tgtPage, bm->numPages);
 
     if (bufferPoolPageNumber == NO_PAGE)
     {
         return RC_PAGE_NOT_FOUND_IN_CACHE;
     }
 
-    bpd->dirtyFlags[bufferPoolPageNumber] = true;
+    bpData->dirtyflag[bufferPoolPageNumber] = true;
     return RC_OK;
 }
 
 /**
- * This function searches for a specific page number in the buffer pool.
- * It takes in the buffer pool data structure, the target page number, and the total number of pages in the buffer pool.
- * It returns the index of the pool where the target page is found, or NO_PAGE if the page is not found in the buffer pool.
+ * The function looks for a page number in the buffer pool, takes the buffer pool data structure, the targer page no.,
+ * the total no. of pages, and returns the index of the pool where the page is found. or NO_PAGE if not found.
  */
-static PageNumber findPageInBuffer(BM_BufferPoolData *bufferPoolData, PageNumber targetPage, int numPages)
+static PageNumber findPageInBuffer(BPData *bpdta, PageNumber thepage, int numPages)
 {
-    BufferPoolFrame *currentPage = bufferPoolData->head;
+    BufferPoolFrame *thisPage = bpdta->headFrame;
 
     // Calculate the number of filled slots in the buffer pool
-    int filledSlots = numPages - bufferPoolData->noOfAvailablePageFrames;
+    int fullslots = numPages - bpdta->pageframesavailable;
 
-    // Traverse the linked list until we've traversed all the filled slots or we've reached the end of the list
-    for (int i = 0; i < filledSlots && currentPage != NULL; i++)
+    // Traverse the linked list
+    for (int i = 0; i < fullslots && thisPage != NULL; i++)
     {
-        if (currentPage->pageIndex == targetPage)
+        if (thisPage->indexpage == thepage)
         {
-            return currentPage->poolIndex;
+            return thisPage->indexpool;
         }
-        currentPage = currentPage->next;
+        thisPage = thisPage->nextFrame;
     }
     return NO_PAGE;
 }
@@ -299,19 +291,19 @@ RC unpinPage(BM_BufferPool *const bm, BM_PageHandle *const page)
         return RC_PAGE_NOT_FOUND_IN_CACHE;
     }
 
-    BM_BufferPoolData *bpd = (BM_BufferPoolData *)bm->mgmtData;
-    PageNumber targetPage = page->pageNum;
+    PageNumber tgtPage = page->pageNum;
+    BPData *bpData = (BPData *)bm->mgmtData;
 
-    PageNumber bufferPoolPageNumber = findPageInBuffer(bpd, targetPage, bm->numPages);
+    PageNumber bufferPoolPageNumber = findPageInBuffer(bpData, tgtPage, bm->numPages);
 
     if (bufferPoolPageNumber == NO_PAGE)
     {
         return RC_PAGE_NOT_FOUND_IN_CACHE;
     }
 
-    if (bpd->fixCounts[bufferPoolPageNumber] > 0)
+    if (bpData->fixcounts[bufferPoolPageNumber] > 0)
     {
-        bpd->fixCounts[bufferPoolPageNumber]--;
+        bpData->fixcounts[bufferPoolPageNumber]--;
     }
 
     return RC_OK;
@@ -340,20 +332,15 @@ RC writePageToFile(const char *pageFile, PageNumber pageNum, SM_PageHandle pageH
 }
 
 /**
- * This function writes the page data to disk and marks the page as no longer dirty.
- * It first retrieves the buffer pool data and the actual page number from the page handle.
- * Then it uses the buffer pool data to find the index of the page in the buffer pool.
- * If the page is not found in the buffer pool, it returns an error.
- *
- * If the page is found, it writes the page data to disk using the page file and the actual page number.
- * It then resets the dirty flag for the page in the buffer pool data and increments the write operation counter.
- *
- * Finally, it returns a success code.
+ * This writes the page data to disk and marks the page as no longer dirty.
+ * If the page is found, it writes the page data to disk using the page file and the actual page no.
+ * Then, it resets the dirty flag for the page in the buffer pool data and increments the write op counter.
+ * Then returns the success RC_OK code.
  */
 RC forcePage(BM_BufferPool *const bm, BM_PageHandle *const page)
 {
     // Get the buffer pool data
-    BM_BufferPoolData *bufferPoolData = (BM_BufferPoolData *)bm->mgmtData;
+    BPData *bufferPoolData = (BPData *)bm->mgmtData;
     // Get the actual page number from the page handle
     PageNumber actualPageNumber = page->pageNum;
     // Find the index of the page in the buffer pool
@@ -369,17 +356,17 @@ RC forcePage(BM_BufferPool *const bm, BM_PageHandle *const page)
         return status;
     }
 
-    // Mark the page as no longer dirty
-    bufferPoolData->dirtyFlags[bufferPoolPageNumber] = false;
-    // Increment the write operation counter
-    bufferPoolData->noOfWriteOperations++;
+    // Mark the page as not dirty
+    bufferPoolData->dirtyflag[bufferPoolPageNumber] = false;
+    // Increment write operations counter
+    bufferPoolData->writeoperations++;
     return RC_OK;
 }
 
 // Helper function to get buffer pool data
-static inline BM_BufferPoolData *getBufferPoolData(BM_BufferPool *const bm)
+static inline BPData *getBufferPoolData(BM_BufferPool *const bm)
 {
-    return (BM_BufferPoolData *)bm->mgmtData;
+    return (BPData *)bm->mgmtData;
 }
 
 /**
@@ -387,25 +374,24 @@ static inline BM_BufferPoolData *getBufferPoolData(BM_BufferPool *const bm)
  */
 PageNumber *getFrameContents(BM_BufferPool *const bm)
 {
-    return getBufferPoolData(bm)->pageNumberList;
+    return getBufferPoolData(bm)->listPageNo;
 }
 
 /**
- * Returns an array of booleans indicating whether each page in the buffer pool is dirty or not.
- * A page is dirty if it has been modified since it was brought into the buffer pool.
+ * Returns an array of of bools that indicate whether each page in the buffer pool is dirty or not.
  */
 bool *getDirtyFlags(BM_BufferPool *const bm)
 {
-    return getBufferPoolData(bm)->dirtyFlags;
+    return getBufferPoolData(bm)->dirtyflag;
 }
 
 /**
- * Returns an array of integers indicating the number of times each page in the buffer pool
- * has been fixed (i.e. brought into the buffer pool).
+ * Returns an array of integers showing the number of times each page in the buffer pool
+ * has been fixed
  */
 int *getFixCounts(BM_BufferPool *const bm)
 {
-    return getBufferPoolData(bm)->fixCounts;
+    return getBufferPoolData(bm)->fixcounts;
 }
 
 /**
@@ -413,7 +399,7 @@ int *getFixCounts(BM_BufferPool *const bm)
  */
 int getNumReadIO(BM_BufferPool *const bm)
 {
-    return getBufferPoolData(bm)->noOfReadOperations;
+    return getBufferPoolData(bm)->readoperations;
 }
 
 /**
@@ -422,19 +408,19 @@ int getNumReadIO(BM_BufferPool *const bm)
  */
 int getNumWriteIO(BM_BufferPool *const bm)
 {
-    return getBufferPoolData(bm)->noOfWriteOperations;
+    return getBufferPoolData(bm)->writeoperations;
 }
 
 /**
  * Finds the page number of a page in the cache.
  */
-static bool findPageInCache(BM_BufferPoolData *bpd, PageNumber pageNum, PageNumber *bufferPoolPageIndex)
+static bool findPageInCache(BPData *bpd, PageNumber pageNum, PageNumber *pgindexbp)
 {
-    for (BufferPoolFrame *temp = bpd->head; temp != NULL; temp = temp->next)
+    for (BufferPoolFrame *temp = bpd->headFrame; temp != NULL; temp = temp->nextFrame)
     {
-        if (temp->pageIndex == pageNum)
+        if (temp->indexpage == pageNum)
         {
-            *bufferPoolPageIndex = temp->poolIndex;
+            *pgindexbp = temp->indexpool;
             return true;
         }
     }
@@ -444,226 +430,203 @@ static bool findPageInCache(BM_BufferPoolData *bpd, PageNumber pageNum, PageNumb
 /**
  * Adds a new frame to the cache.
  */
-static void addNewFrameToCache(BM_BufferPoolData *bpd, PageNumber pageNum, PageNumber bufferPoolPageIndex)
+static void addNewFrameToCache(BPData *bpData, PageNumber pageNum, PageNumber pgIndexBP)
 {
     BufferPoolFrame *handle = malloc(sizeof(BufferPoolFrame));
-    handle->poolIndex = bufferPoolPageIndex;
-    handle->pageIndex = pageNum;
-    handle->next = NULL;
+    handle->indexpool = pgIndexBP;
+    handle->indexpage = pageNum;
+    handle->nextFrame = NULL;
 
-    if (bpd->head == NULL)
+    if (bpData->headFrame == NULL)
     {
-        bpd->head = bpd->tail = handle;
-        handle->prev = NULL;
+        bpData->headFrame = bpData->endFrame = handle;
+        handle->prevFrame = NULL;
     }
     else
     {
-        bpd->tail->next = handle;
-        handle->prev = bpd->tail;
-        bpd->tail = handle;
+        bpData->endFrame->nextFrame = handle;
+        handle->prevFrame = bpData->endFrame;
+        bpData->endFrame = handle;
     }
 
-    bpd->pageNumberList[bufferPoolPageIndex] = pageNum;
-    bpd->noOfAvailablePageFrames--;
+    bpData->listPageNo[pgIndexBP] = pageNum;
+    bpData->pageframesavailable--;
 }
 
 /**
- * Fetches a page from the buffer pool for the given page number. If the page is
- * already in the cache, it is brought to the front. If the page is not in the
- * cache, a new frame is selected from the buffer pool and the page is read from
- * disk into that frame. The frame is then added to the cache.
+ * This function gets a page from the buffer pool for the given page number. If the page is already there,
+ * it brings it to front. If not, it selects a new frame and that page is read from disk to the frame.
+ * The frame is then added to the cache.
  */
 RC pinPage(BM_BufferPool *const bm, BM_PageHandle *const page, const PageNumber pageNum)
 {
-    // Open the page file
+    // Open page file
     SM_FileHandle sm_fileHandle;
     RC status = openPageFile(bm->pageFile, &sm_fileHandle);
     if (status != RC_OK)
         return RC_FILE_NOT_FOUND;
 
-    // If the page file is smaller than the requested page number, ensure that it
-    // has enough space
+    // If the page file is smaller than the req page number, make sure it has enough space
     if (sm_fileHandle.totalNumPages <= pageNum)
     {
         ensureCapacity(pageNum + 1, &sm_fileHandle);
     }
 
     page->pageNum = pageNum;
-    BM_BufferPoolData *bpd = (BM_BufferPoolData *)bm->mgmtData;
-    PageNumber bufferPoolPageIndex = NO_PAGE;
-    bool pageInCache = findPageInCache(bpd, pageNum, &bufferPoolPageIndex);
+    BPData *bpData = (BPData *)bm->mgmtData;
+    PageNumber pgIndexBP = NO_PAGE;
+    bool isPageInCache = findPageInCache(bpData, pageNum, &pgIndexBP);
 
-    // If the page is in the cache, bring it to the front and update the page handle
-    if (pageInCache)
+    // If the page is in the cache, bring it to the front, update page handle
+    if (isPageInCache)
     {
-        // If the buffer pool uses the LRU strategy, update the page's position in the cache
+        // If the buffer pool uses LRU, update the page's position in cache
         if (bm->strategy == RS_LRU)
         {
-            pinPageInCacheForLRU(bm, page, pageNum);
+            LRUCachePinPage(bm, page, pageNum);
         }
-        page->data = bpd->poolData + bufferPoolPageIndex * PAGE_SIZE * sizeof(char);
-        bpd->fixCounts[bufferPoolPageIndex]++;
-        bpd->clockFlag[bufferPoolPageIndex] = 1;
+        page->data = bpData->BpoolData + pgIndexBP * PAGE_SIZE * sizeof(char);
+        bpData->fixcounts[pgIndexBP] = 1;
     }
     else
     {
         // If the page is not in the cache, try to find a frame to add it to
-        if (bpd->noOfAvailablePageFrames > 0)
+        if (bpData->pageframesavailable > 0)
         {
-            bufferPoolPageIndex = bm->numPages - bpd->noOfAvailablePageFrames;
-            addNewFrameToCache(bpd, pageNum, bufferPoolPageIndex);
+            pgIndexBP = bm->numPages - bpData->pageframesavailable;
+            addNewFrameToCache(bpData, pageNum, pgIndexBP);
         }
         else
         {
             // If there is no space in the buffer pool, select a frame based on the buffer pool strategy
             if (bm->strategy == RS_FIFO || bm->strategy == RS_LRU)
             {
-                bufferPoolPageIndex = pinPageForFIFOLRU(bm, page, pageNum, &sm_fileHandle);
+                pgIndexBP = LRUpinPageFIFO(bm, page, pageNum, &sm_fileHandle);
             }
-            else if (bm->strategy == RS_LRU_K)
+            else
             {
-                printf("Not implemented yet\n");
+                printf("\n \n \t \t \t \t \t \t Other Page Replacement Strategies are not available\n");
             }
-            // else if (bm->strategy == RS_CLOCK)
-            // {
-            //     bufferPoolPageIndex = pinPageForCLOCK(bm, page, pageNum);
-            // }
         }
 
-        page->data = bpd->poolData + bufferPoolPageIndex * PAGE_SIZE * sizeof(char);
-        bpd->fixCounts[bufferPoolPageIndex]++;
-        bpd->clockFlag[bufferPoolPageIndex] = 1;
+        page->data = bpData->BpoolData + pgIndexBP * PAGE_SIZE * sizeof(char);
+        bpData->fixcounts[pgIndexBP] = 1;
 
         // Only read from disk if the page is not in cache
         readBlock(page->pageNum, &sm_fileHandle, page->data);
-        bpd->noOfReadOperations++;
+        bpData->readoperations++;
     }
 
     closePageFile(&sm_fileHandle);
     return RC_OK;
 }
 
-
-PageNumber pinPageForFIFOLRU(BM_BufferPool *const bm, BM_PageHandle *const page, const PageNumber pageNum, SM_FileHandle *fileHandle)
+PageNumber LRUpinPageFIFO(BM_BufferPool *const bm, BM_PageHandle *const page,
+                          const PageNumber pageNum, SM_FileHandle *fileHandle)
 {
-    BM_BufferPoolData *bufferPoolData = (BM_BufferPoolData *)bm->mgmtData;
-    BufferPoolFrame *temp = bufferPoolData->head;
+    BPData *bufferPoolData = (BPData *)bm->mgmtData;
     PageNumber bufferPoolPageIndex = NO_PAGE;
 
-    while (temp != NULL)
+    BufferPoolFrame *temp = findFirstUnfixedFrame(bufferPoolData);
+    bool tempfound = (temp != NULL);
+    if (tempfound)
     {
-        if (bufferPoolData->fixCounts[temp->poolIndex] == 0)
-        {
-            break;
-        }
-        temp = temp->next;
-    }
-    if (temp != NULL)
-    {
-        if (temp != bufferPoolData->tail)
-        {
-            bufferPoolData->tail->next = temp;
+        reorderFrames(bufferPoolData, temp);
+        writeDirtyPageIfNeeded(bufferPoolData, fileHandle);
+        updateFrameWithNewPage(bufferPoolData, pageNum);
 
-            temp->next->prev = temp->prev;
-            if (temp == bufferPoolData->head)
-            {
-                bufferPoolData->head = bufferPoolData->head->next;
-            }
-            else
-            {
-                temp->prev->next = temp->next;
-            }
-            temp->prev = bufferPoolData->tail;
-            bufferPoolData->tail = bufferPoolData->tail->next;
-            bufferPoolData->tail->next = NULL;
-        }
-
-        if (bufferPoolData->dirtyFlags[bufferPoolData->tail->poolIndex] == true)
-        {
-            char *memory = bufferPoolData->poolData + bufferPoolData->tail->poolIndex * PAGE_SIZE * sizeof(char);
-            int old_pageNum = bufferPoolData->tail->pageIndex;
-            writeBlock(old_pageNum, fileHandle, memory);
-            bufferPoolData->dirtyFlags[bufferPoolData->tail->poolIndex] = false;
-            bufferPoolData->noOfWriteOperations++;
-        }
-        bufferPoolData->tail->pageIndex = pageNum;
-        bufferPoolData->pageNumberList[bufferPoolData->tail->poolIndex] = pageNum;
-        bufferPoolPageIndex = bufferPoolData->tail->poolIndex;
+        bufferPoolPageIndex = bufferPoolData->endFrame->indexpool;
     }
 
     return bufferPoolPageIndex;
 }
 
-void pinPageInCacheForLRU(BM_BufferPool *const bm, BM_PageHandle *const page, const PageNumber pageNum)
+static BufferPoolFrame *findFirstUnfixedFrame(BPData *bufferPoolData)
 {
-    BM_BufferPoolData *bufferPoolData = (BM_BufferPoolData *)bm->mgmtData;
-    BufferPoolFrame *current = bufferPoolData->head;
-    BufferPoolFrame *tail = bufferPoolData->tail;
-    while (current != NULL)
+    BufferPoolFrame *temp = bufferPoolData->headFrame;
+    bool foundtemp = (temp != NULL);
+    while (foundtemp)
     {
-        if (current->pageIndex == pageNum)
+        if (bufferPoolData->fixcounts[temp->indexpool] == 0)
         {
-            break;
+            return temp;
         }
-
-        current = current->next;
+        temp = temp->nextFrame;
     }
+    return NULL;
+}
 
-    if (current != tail)
+static void reorderFrames(BPData *bufferPoolData, BufferPoolFrame *temp)
+{
+    if (temp != bufferPoolData->endFrame)
     {
-        bufferPoolData->tail->next = current;
-        current->next->prev = current->prev;
+        bufferPoolData->endFrame->nextFrame = temp;
 
-        if (current == bufferPoolData->head)
+        temp->nextFrame->prevFrame = temp->prevFrame;
+        if (temp == bufferPoolData->headFrame)
         {
-            bufferPoolData->head = bufferPoolData->head->next;
+            bufferPoolData->headFrame = bufferPoolData->headFrame->nextFrame;
         }
         else
         {
-            current->prev->next = current->next;
+            temp->prevFrame->nextFrame = temp->nextFrame;
         }
-        current->prev = bufferPoolData->tail;
-        bufferPoolData->tail = bufferPoolData->tail->next;
-        bufferPoolData->tail->next = NULL;
+
+        temp->prevFrame = bufferPoolData->endFrame;
+        bufferPoolData->endFrame = bufferPoolData->endFrame->nextFrame;
+        bufferPoolData->endFrame->nextFrame = NULL;
     }
 }
 
-// PageNumber pinPageForCLOCK(BM_BufferPool *const bm, BM_PageHandle *const page, const PageNumber pageNum)
-// {
-//     BM_BufferPoolData *bufferPoolData = (BM_BufferPoolData *)bm->mgmtData;
-//     BufferPoolFrame *temp = NULL;
-//     PageNumber bufferPoolPageIndex = NO_PAGE;
+static void writeDirtyPageIfNeeded(BPData *bufferPoolData, SM_FileHandle *fileHandle)
+{
+    if (bufferPoolData->dirtyflag[bufferPoolData->endFrame->indexpool] == true)
+    {
+        char *memory = bufferPoolData->BpoolData +
+                       bufferPoolData->endFrame->indexpool * PAGE_SIZE * sizeof(char);
+        int old_pageNum = bufferPoolData->endFrame->indexpage;
+        writeBlock(old_pageNum, fileHandle, memory);
+        bufferPoolData->dirtyflag[bufferPoolData->endFrame->indexpool] = false;
+        bufferPoolData->writeoperations++;
+    }
+}
 
-//     if (bufferPoolData->current == NULL)
-//     {
-//         bufferPoolData->current = bufferPoolData->head;
-//     }
-//     while (bufferPoolData->clockFlag[bufferPoolData->current->poolIndex] == 1)
-//     {
-//         bufferPoolData->clockFlag[bufferPoolData->current->poolIndex] = 0;
-//         if (bufferPoolData->current == bufferPoolData->tail)
-//         {
-//             bufferPoolData->current = bufferPoolData->head;
-//         }
-//         else
-//         {
-//             bufferPoolData->current = bufferPoolData->current->next;
-//         }
-//     }
-//     bufferPoolData->current->pageIndex = pageNum;
-//     bufferPoolData->pageNumberList[bufferPoolData->current->poolIndex] = pageNum;
-//     bufferPoolData->clockFlag[bufferPoolData->current->poolIndex] = 1;
-//     temp = bufferPoolData->current;
+static void updateFrameWithNewPage(BPData *bufferPoolData, PageNumber pageNum)
+{
+    bufferPoolData->endFrame->indexpage = pageNum;
+    bufferPoolData->listPageNo[bufferPoolData->endFrame->indexpool] = pageNum;
+}
 
-//     if (bufferPoolData->current == bufferPoolData->tail)
-//     {
-//         bufferPoolData->current = bufferPoolData->head;
-//     }
-//     else
-//     {
-//         bufferPoolData->current = bufferPoolData->current->next;
-//     }
-//     bufferPoolPageIndex = temp->poolIndex;
+void LRUCachePinPage(BM_BufferPool *const bm, BM_PageHandle *const page, const PageNumber pageNum)
+{
+    BPData *bpData = (BPData *)bm->mgmtData;
+    BufferPoolFrame *currentFrame = bpData->headFrame;
+    BufferPoolFrame *endFrame = bpData->endFrame;
 
-//     return bufferPoolPageIndex;
-// }
+    // Find frame w/ page no.
+    while (currentFrame != NULL && currentFrame->indexpage != pageNum)
+    {
+        currentFrame = currentFrame->nextFrame;
+    }
+
+    if (currentFrame != NULL && currentFrame != endFrame)
+    {
+        if (currentFrame == bpData->headFrame)
+        {
+            bpData->headFrame = currentFrame->nextFrame;
+        }
+        else
+        {
+            currentFrame->prevFrame->nextFrame = currentFrame->nextFrame;
+        }
+
+        if (currentFrame->nextFrame != NULL)
+        {
+            currentFrame->nextFrame->prevFrame = currentFrame->prevFrame;
+        }
+        bpData->endFrame->nextFrame = currentFrame;
+        currentFrame->prevFrame = bpData->endFrame;
+        currentFrame->nextFrame = NULL;
+        bpData->endFrame = currentFrame;
+    }
+}
