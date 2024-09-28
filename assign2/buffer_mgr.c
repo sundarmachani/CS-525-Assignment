@@ -47,7 +47,7 @@ RC closePageFile(SM_FileHandle *fHandle);
 void LRUCachePinPage(BM_BufferPool *bm, BM_PageHandle *page, PageNumber pageNum);
 int LRUpinPageFIFO(BM_BufferPool *bm, BM_PageHandle *page, PageNumber pageNum, SM_FileHandle *fHandle);
 static PageNumber findPageInBuffer(BPData *bpData, PageNumber thepage, int numPages);
-static BufferPoolFrame* firstframefind(BPData *bpData);
+static BufferPoolFrame *firstframefind(BPData *bpData);
 static void dirtypageneeded(BPData *bpData, SM_FileHandle *fileHandle);
 static void updatenewpg(BPData *bpData, PageNumber pageNum);
 static void reorder(BPData *bpData, BufferPoolFrame *temp);
@@ -457,9 +457,11 @@ static void addNewFrameToCache(BPData *bpData, PageNumber pageNum, PageNumber pg
  * This function handles a page that is already in the cache. It changes the page's fix count
  * and points the page handle to the correct page in the cache.
  */
-void handleCachedPage(BM_BufferPool *const bm, BM_PageHandle *const page, PageNumber pgIndexBP, const PageNumber pageNum, BPData *bpData) {
-    if (bm->strategy == RS_LRU) {
-        LRUCachePinPage(bm, page, pageNum);  // Use pageNum here as well
+void handleCachedPage(BM_BufferPool *const bm, BM_PageHandle *const page, PageNumber pgIndexBP, const PageNumber pageNum, BPData *bpData)
+{
+    if (bm->strategy == RS_LRU)
+    {
+        LRUCachePinPage(bm, page, pageNum); // Use pageNum here as well
     }
     page->data = bpData->BpoolData + pgIndexBP * PAGE_SIZE * sizeof(char);
     bpData->fixcounts[pgIndexBP] = 1;
@@ -469,12 +471,16 @@ void handleCachedPage(BM_BufferPool *const bm, BM_PageHandle *const page, PageNu
  * This function determines which page in the buffer pool should be replaced when a new page is requested.
  * It currently only supports the FIFO and LRU strategies.
  */
-PageNumber selectPageReplacementFrame(BM_BufferPool *const bm, BM_PageHandle *const page, const PageNumber pageNum, SM_FileHandle *sm_fileHandle) {
-    if (bm->strategy == RS_FIFO || bm->strategy == RS_LRU) {
+PageNumber selectPageReplacementFrame(BM_BufferPool *const bm, BM_PageHandle *const page, const PageNumber pageNum, SM_FileHandle *sm_fileHandle)
+{
+    if (bm->strategy == RS_FIFO || bm->strategy == RS_LRU)
+    {
         return LRUpinPageFIFO(bm, page, pageNum, sm_fileHandle);
-    } else {
+    }
+    else
+    {
         printf("\n \n \t \t \t \t \t \t Other Page Replacement Strategies are not available\n");
-        return NO_PAGE;  // Return a default value if no strategy is available
+        return NO_PAGE; // Return a default value if no strategy is available
     }
 }
 
@@ -483,21 +489,25 @@ PageNumber selectPageReplacementFrame(BM_BufferPool *const bm, BM_PageHandle *co
  * it brings it to front. If not, it selects a new frame and that page is read from disk to the frame.
  * The frame is then added to the cache.
  */
-RC pinPage(BM_BufferPool *const bm, BM_PageHandle *const page, const PageNumber pageNum) {
+RC pinPage(BM_BufferPool *const bm, BM_PageHandle *const page, const PageNumber pageNum)
+{
     // Check for null pointers
-    if (bm == NULL || page == NULL) {
+    if (bm == NULL || page == NULL)
+    {
         return RC_NULL_PARAM; // Define this error code as needed
     }
 
     // Open page file
     SM_FileHandle sm_fileHandle;
     RC status = openPageFile(bm->pageFile, &sm_fileHandle);
-    if (status != RC_OK) {
+    if (status != RC_OK)
+    {
         return RC_FILE_NOT_FOUND;
     }
 
     // Ensure the page file has enough space for the requested page number
-    if (sm_fileHandle.totalNumPages <= pageNum) {
+    if (sm_fileHandle.totalNumPages <= pageNum)
+    {
         ensureCapacity(pageNum + 1, &sm_fileHandle);
     }
 
@@ -508,26 +518,34 @@ RC pinPage(BM_BufferPool *const bm, BM_PageHandle *const page, const PageNumber 
     // Check if the page is in the cache
     bool isPageInCache = findPageInCache(bpData, pageNum, &pgIndexBP);
 
-    if (isPageInCache) {
+    if (isPageInCache)
+    {
         handleCachedPage(bm, page, pgIndexBP, pageNum, bpData);
-    } else {
+    }
+    else
+    {
         // If not in cache, try to add it to the buffer pool
-        if (bpData->pageframesavailable > 0) {
+        if (bpData->pageframesavailable > 0)
+        {
             pgIndexBP = bm->numPages - bpData->pageframesavailable; // Adjust based on your structure
             addNewFrameToCache(bpData, pageNum, pgIndexBP);
-        } else {
+        }
+        else
+        {
             // Select a frame based on buffer pool strategy
             pgIndexBP = selectPageReplacementFrame(bm, page, pageNum, &sm_fileHandle);
         }
 
         // Ensure pgIndexBP is valid
         // Check against available frames in bpData
-        if (pgIndexBP < 0 || pgIndexBP >= (bm->numPages - bpData->pageframesavailable)) {
+        if (pgIndexBP < 0 || pgIndexBP >= (bm->numPages - bpData->pageframesavailable))
+        {
             return RC_PAGE_NOT_FOUND_IN_CACHE; // Handle this error appropriately
         }
 
         // Read the page from disk
-        if (readBlock(page->pageNum, &sm_fileHandle, bpData->BpoolData + pgIndexBP * PAGE_SIZE * sizeof(char)) != RC_OK) {
+        if (readBlock(page->pageNum, &sm_fileHandle, bpData->BpoolData + pgIndexBP * PAGE_SIZE * sizeof(char)) != RC_OK)
+        {
             return RC_FILE_NOT_FOUND; // Handle read failure appropriately
         }
         bpData->readoperations++;
@@ -545,21 +563,23 @@ RC pinPage(BM_BufferPool *const bm, BM_PageHandle *const page, const PageNumber 
  Here we get a page from the buffer pool for the page number and if it's there we bring it to the front.
  Else, we get a new frame, where the page is read from disk to the frame. We then add it to cache.
  */
-PageNumber LRUpinPageFIFO(BM_BufferPool *const bm, BM_PageHandle *const page, 
-                          const PageNumber pageNum, SM_FileHandle *fileHandle) {
+PageNumber LRUpinPageFIFO(BM_BufferPool *const bm, BM_PageHandle *const page,
+                          const PageNumber pageNum, SM_FileHandle *fileHandle)
+{
     BPData *bpData = (BPData *)bm->mgmtData;
     PageNumber bufferPoolPageIndex = NO_PAGE;
-    
+
     BufferPoolFrame *temp = firstframefind(bpData);
-    
-    if (temp) {
+
+    if (temp)
+    {
         reorder(bpData, temp);
         dirtypageneeded(bpData, fileHandle);
         updatenewpg(bpData, pageNum);
-        
+
         bufferPoolPageIndex = bpData->endFrame->indexpool;
     }
-    
+
     return bufferPoolPageIndex;
 }
 
@@ -567,10 +587,13 @@ PageNumber LRUpinPageFIFO(BM_BufferPool *const bm, BM_PageHandle *const page,
 Find the first frame in the buffer pool that's unpinned.
 If none, return NULL.
  */
-static BufferPoolFrame* firstframefind(BPData *bpData) {
+static BufferPoolFrame *firstframefind(BPData *bpData)
+{
     BufferPoolFrame *temp = bpData->headFrame;
-    while (temp) {
-        if (bpData->fixcounts[temp->indexpool] == 0) {
+    while (temp)
+    {
+        if (bpData->fixcounts[temp->indexpool] == 0)
+        {
             return temp;
         }
         temp = temp->nextFrame;
@@ -582,22 +605,26 @@ static BufferPoolFrame* firstframefind(BPData *bpData) {
  Reorders the frames' linked list. This function takes a frame found as an arg
  and puts it at the end of the list
  */
-static void reorder(BPData *bpData, BufferPoolFrame *temp) {
+static void reorder(BPData *bpData, BufferPoolFrame *temp)
+{
     // if the frame is not already at the end of the list
-    if (temp != bpData->endFrame) {
-        // move  frame to end of list 
+    if (temp != bpData->endFrame)
+    {
+        // move  frame to end of list
         bpData->endFrame->nextFrame = temp;
-        
 
         temp->nextFrame->prevFrame = temp->prevFrame;
-       
-        if (temp == bpData->headFrame) {
+
+        if (temp == bpData->headFrame)
+        {
             bpData->headFrame = bpData->headFrame->nextFrame;
-        } else {
+        }
+        else
+        {
             // update next one
             temp->prevFrame->nextFrame = temp->nextFrame;
         }
-        
+
         // update previous, next pointers
         temp->prevFrame = bpData->endFrame;
         bpData->endFrame = bpData->endFrame->nextFrame;
@@ -608,10 +635,12 @@ static void reorder(BPData *bpData, BufferPoolFrame *temp) {
 /*
  write dirty page to disk and mark as clean
  */
-static void dirtypageneeded(BPData *bpData, SM_FileHandle *fileHandle) {
-    if (bpData->dirtyflag[bpData->endFrame->indexpool] == true) {
+static void dirtypageneeded(BPData *bpData, SM_FileHandle *fileHandle)
+{
+    if (bpData->dirtyflag[bpData->endFrame->indexpool] == true)
+    {
         // Point to data for page
-        char *memory = bpData->BpoolData + 
+        char *memory = bpData->BpoolData +
                        bpData->endFrame->indexpool * PAGE_SIZE * sizeof(char);
         // dirty page no.
         int oldPgNum = bpData->endFrame->indexpage;
@@ -626,10 +655,11 @@ static void dirtypageneeded(BPData *bpData, SM_FileHandle *fileHandle) {
 /*
  Update end frame of linked list for new page no.
  */
-static void updatenewpg(BPData *bpData, PageNumber pageNum) {
+static void updatenewpg(BPData *bpData, PageNumber pageNum)
+{
     bpData->endFrame->indexpage = pageNum;
     bpData->listPageNo[bpData->endFrame->indexpool] = pageNum;
-} 
+}
 
 void LRUCachePinPage(BM_BufferPool *const bm, BM_PageHandle *const page, const PageNumber pageNum)
 {
