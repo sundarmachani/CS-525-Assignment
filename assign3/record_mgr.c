@@ -276,7 +276,7 @@ RC openTable(RM_TableData *rel, char *name)
     unpinPage(bm, pageHandle);
     if (!deserializedSchema)
     {
-        rc = RC_SCHEMA_DESERIALIZATION_FAIL;
+        rc = RC_SCHEMA_DESERIALIZATION_ERRROR;
         goto cleanup;
     }
     rel->name = name;
@@ -325,7 +325,7 @@ RC deleteTable(char *name)
         return RC_NULL_PARAM;
     if (remove(name) != 0)
     {
-        return RC_RM_TABLE_NOT_EXIST;
+        return RC_RM_TABLE_DOES_NOT_EXIST;
     }
     return RC_OK;
 }
