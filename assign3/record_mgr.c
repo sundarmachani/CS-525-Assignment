@@ -17,11 +17,11 @@ static char pageFile[MAX_PAGE_FILE_NAME];
 
 typedef struct ScanData
 {
-    int currentPage;
-    int currentSlot;
+    int thisPage;
+    int thisSlot;
     int numOfPages;
     int totalNumSlots;
-    Expr *condition;
+    Expr *theCondition;
 } ScanData;
 
 RC initRecordManager(void *mgmtData)
@@ -573,43 +573,58 @@ RC getRecord(RM_TableData *rel, RID id, Record *record)
     return unpinRC;
 }
 
-RC startScan(RM_TableData *rel, RM_ScanHandle *scan, Expr *cond)
+RC startScan(RM_TableData *rel, RM_ScanHandle *scan, Expr *condition)
 {
-    // if (!rel || !scan || !cond)
-    // {
-    //     return RC_ERROR;
-    // }
+    // inputs
+    if (rel == NULL)
+    {
+        return RC_ERROR;
+    }
 
+    if (scan == NULL)
+    {
+        return RC_ERROR;
+    }
+
+    if (condition == NULL)
+    {
+        return RC_ERROR;
+    }
+
+    // Oget total pages from file
     SM_FileHandle fileHandle;
-    RC rc;
-    rc = openPageFile(rel->name, &fileHandle);
+    RC rc = openPageFile(rel->name, &fileHandle);
     if (rc != RC_OK)
     {
         return rc;
     }
-
-    int totalNumPages = fileHandle.totalNumPages;
+    int totnumpages = fileHandle.totalNumPages;
     closePageFile(&fileHandle);
+
+    // Calculate slots per page
     int recordSize = getRecordSize(rel->schema);
     if (recordSize <= 0)
     {
         return RC_ERROR;
     }
-    int totalNumSlots = PAGE_SIZE / recordSize;
-    ScanData *scanInfo = (ScanData *)malloc(sizeof(ScanData));
-    if (!scanInfo)
+    int totNumSlots = PAGE_SIZE / recordSize;
+
+    //Initialize ScanData
+    ScanData *scanDataInfo = (ScanData *)malloc(sizeof(ScanData));
+    if (scanDataInfo == NULL)
     {
         return RC_ERROR;
     }
-
-    scanInfo->currentSlot = 0;
-    scanInfo->currentPage = 1;
-    scanInfo->numOfPages = totalNumPages;
-    scanInfo->totalNumSlots = totalNumSlots;
-    scanInfo->condition = cond;
+    *scanDataInfo = (ScanData){
+        .thisSlot = 0,
+        .thisPage = 1,
+        .numOfPages = totnumpages,
+        .totalNumSlots = totNumSlots,
+        .theCondition = condition
+    };
 
     scan->rel = rel;
-    scan->mgmtData = scanInfo;
+    scan->mgmtData = scanDataInfo;
 
     return RC_OK;
 }
@@ -627,12 +642,12 @@ RC next(RM_ScanHandle *scan, Record *record)
 
     while (true)
     {
-        if (scanInfo->currentPage >= scanInfo->numOfPages)
+        if (scanInfo->thisPage >= scanInfo->numOfPages)
         {
             return RC_RM_NO_MORE_TUPLES;
         }
-        record->id.page = scanInfo->currentPage;
-        record->id.slot = scanInfo->currentSlot;
+        record->id.page = scanInfo->thisPage;
+        record->id.slot = scanInfo->thisSlot;
 
         rc = getRecord(scan->rel, record->id, record);
         if (rc != RC_OK)
@@ -653,28 +668,28 @@ RC next(RM_ScanHandle *scan, Record *record)
         if (idValue->v.intV == 0)
         {
             freeVal(idValue);
-            scanInfo->currentSlot++;
-            if (scanInfo->currentSlot >= scanInfo->totalNumSlots)
+            scanInfo->thisSlot++;
+            if (scanInfo->thisSlot >= scanInfo->totalNumSlots)
             {
-                scanInfo->currentSlot = 0;
-                scanInfo->currentPage++;
+                scanInfo->thisSlot = 0;
+                scanInfo->thisPage++;
             }
             continue; // Skip to the next slot
         }
 
         freeVal(idValue); // Free the value after checking
 
-        rc = evalExpr(record, scan->rel->schema, scanInfo->condition, &value);
+        rc = evalExpr(record, scan->rel->schema, scanInfo->theCondition, &value);
         if (rc != RC_OK)
         {
             return rc;
         }
 
-        scanInfo->currentSlot++;
-        if (scanInfo->currentSlot >= scanInfo->totalNumSlots)
+        scanInfo->thisSlot++;
+        if (scanInfo->thisSlot >= scanInfo->totalNumSlots)
         {
-            scanInfo->currentSlot = 0;
-            scanInfo->currentPage++;
+            scanInfo->thisSlot = 0;
+            scanInfo->thisPage++;
         }
 
         if (value->v.boolV)
