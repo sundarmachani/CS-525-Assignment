@@ -8,7 +8,7 @@
 
 #define MAX_PAGE_FILE_NAME 255
 #define SIZE_INT sizeof(int)
-#define SIZE_FLOAT sizeof(float)
+#define SIZE_FLOAT 15
 #define SIZE_BOOL sizeof(bool)
 #define DELIMITER_FIRST_ATTR '|'
 #define DELIMITER_OTHER_ATTR ','
@@ -93,7 +93,7 @@ RC createTable(char *name, Schema *schema)
 
 Schema *deserializeSchema(char *serializedSchema)
 {
-    if (serializedSchema == NULL)
+    if (serializedSchema == NULL || strlen(serializedSchema) == 0)
     {
         return NULL;
     }
@@ -113,8 +113,28 @@ Schema *deserializeSchema(char *serializedSchema)
 
     char *tokenPointer;
     char *tmpStr = strtok_r(schemaData, "<", &tokenPointer);
+    if (tmpStr == NULL)
+    {
+        free(schemaData);
+        free(schemaResult);
+        return NULL;
+    }
+
     tmpStr = strtok_r(NULL, ">", &tokenPointer);
+    if (tmpStr == NULL)
+    {
+        free(schemaData);
+        free(schemaResult);
+        return NULL;
+    }
+
     schemaResult->numAttr = atoi(tmpStr);
+    if (schemaResult->numAttr <= 0)
+    {
+        free(schemaData);
+        free(schemaResult);
+        return NULL;
+    }
 
     schemaResult->attrNames = (char **)malloc(sizeof(char *) * schemaResult->numAttr);
     schemaResult->dataTypes = (DataType *)malloc(sizeof(DataType) * schemaResult->numAttr);
@@ -362,6 +382,33 @@ int getNumTuples(RM_TableData *rel)
     return totalRecord;
 }
 
+int getUsedPageSpace(char *pageData, Schema *schema)
+{
+    int usedSpace = 0;
+    int offset = 0;
+    int recordSize = getRecordSize(schema); // Including metadata if necessary
+
+    // Loop through the page data and calculate the used space
+    while (offset < PAGE_SIZE)
+    {
+        // Check if there is a valid record at this offset
+        // Assuming a record starts with some kind of marker (e.g., metadata byte for valid record)
+        if (pageData[offset] != '\0')
+        {                            // Check if this space is in use (simple check for now)
+            usedSpace += recordSize; // Add the size of the record
+        }
+        else
+        {
+            break; // Stop when we encounter unused space
+        }
+
+        // Move the offset to the next potential record location
+        offset += recordSize;
+    }
+
+    return usedSpace;
+}
+
 RC insertRecord(RM_TableData *rel, Record *record)
 {
     // Declaring variables
@@ -372,17 +419,19 @@ RC insertRecord(RM_TableData *rel, Record *record)
     int slotNum = 0;
     int pageLength = 0;
 
-    openPageFile(pageFile, &fileHandle);
+    if (openPageFile(pageFile, &fileHandle) != RC_OK)
+    {
+        return RC_FILE_NOT_FOUND;
+    }
     int totalNumPages = fileHandle.totalNumPages;
     closePageFile(&fileHandle);
-    int recordSize = getRecordSize(rel->schema) + 3;
+    int recordSize = getRecordSize(rel->schema);
     pageNum = 1;
 
     while (totalNumPages > pageNum)
     {
         pinPage(bm, pageHandle, pageNum);
-        char *pageData = pageHandle->data;
-        pageLength = strlen(pageData);
+        pageLength = getUsedPageSpace(pageHandle->data, rel->schema);
         int remainingSpace = PAGE_SIZE - pageLength;
 
         if (recordSize < remainingSpace)
@@ -398,7 +447,7 @@ RC insertRecord(RM_TableData *rel, Record *record)
 
     pinPage(bm, pageHandle, pageNum);
     char *dataPointer = pageHandle->data;
-    pageLength = strlen(dataPointer);
+    pageLength = getUsedPageSpace(dataPointer, rel->schema);
     char *recordPointer = pageLength + dataPointer;
     strcpy(recordPointer, record->data);
     markDirty(bm, pageHandle);
@@ -413,7 +462,48 @@ RC insertRecord(RM_TableData *rel, Record *record)
 
 RC deleteRecord(RM_TableData *rel, RID id)
 {
-    return RC_OK;
+    if (rel == NULL)
+    {
+        return RC_NULL_PARAM;
+    }
+
+    BM_BufferPool *bm = (BM_BufferPool *)rel->mgmtData;
+    BM_PageHandle *pageHandle = (BM_PageHandle *)malloc(sizeof(BM_PageHandle));
+    if (pageHandle == NULL)
+    {
+        return RC_MEM_ALLOC_FAILURE;
+    }
+
+    PageNumber pageNum = id.page;
+    int slotNum = id.slot;
+    int recordSize = getRecordSize(rel->schema) + 3; // +3 for metadata
+
+    RC pinRC = pinPage(bm, pageHandle, pageNum);
+    if (pinRC != RC_OK)
+    {
+        free(pageHandle);
+        return pinRC;
+    }
+
+    char *dataPointer = pageHandle->data;
+    char *recordPointer = dataPointer + (recordSize * slotNum);
+
+    // Mark the record as deleted by setting the first byte to a special value
+    // You can choose any value that's not used for valid records, e.g., '\0'
+    *recordPointer = '\0';
+
+    RC markDirtyRC = markDirty(bm, pageHandle);
+    if (markDirtyRC != RC_OK)
+    {
+        unpinPage(bm, pageHandle);
+        free(pageHandle);
+        return markDirtyRC;
+    }
+
+    RC unpinRC = unpinPage(bm, pageHandle);
+    free(pageHandle);
+
+    return unpinRC;
 }
 
 RC updateRecord(RM_TableData *rel, Record *record)
@@ -426,7 +516,7 @@ RC updateRecord(RM_TableData *rel, Record *record)
     BM_PageHandle pageHandle;
     PageNumber pageNum = record->id.page;
     int slotNum = record->id.slot;
-    int recordSize = getRecordSize(rel->schema) + 3;
+    int recordSize = getRecordSize(rel->schema);
     RC rc = pinPage(bm, &pageHandle, pageNum);
     if (rc != RC_OK)
     {
@@ -455,7 +545,7 @@ RC getRecord(RM_TableData *rel, RID id, Record *record)
 
     PageNumber pageNum = id.page;
     int slotNum = id.slot;
-    int recordSize = getRecordSize(rel->schema) + 3;
+    int recordSize = getRecordSize(rel->schema);
     RC pinRC = pinPage(bm, pageHandle, pageNum);
     if (pinRC != RC_OK)
     {
@@ -485,10 +575,10 @@ RC getRecord(RM_TableData *rel, RID id, Record *record)
 
 RC startScan(RM_TableData *rel, RM_ScanHandle *scan, Expr *cond)
 {
-    if (!rel || !scan || !cond)
-    {
-        return RC_ERROR;
-    }
+    // if (!rel || !scan || !cond)
+    // {
+    //     return RC_ERROR;
+    // }
 
     SM_FileHandle fileHandle;
     RC rc;
@@ -550,6 +640,30 @@ RC next(RM_ScanHandle *scan, Record *record)
             return rc;
         }
 
+        // Validate the record to ensure it's not empty/uninitialized
+        // Here we assume that the 'id' should not be zero for valid records
+        Value *idValue;
+        rc = getAttr(record, scan->rel->schema, 0, &idValue); // Assuming 'id' is at index 0
+        if (rc != RC_OK)
+        {
+            return rc;
+        }
+
+        // If the id is zero, consider the record as invalid and skip it
+        if (idValue->v.intV == 0)
+        {
+            freeVal(idValue);
+            scanInfo->currentSlot++;
+            if (scanInfo->currentSlot >= scanInfo->totalNumSlots)
+            {
+                scanInfo->currentSlot = 0;
+                scanInfo->currentPage++;
+            }
+            continue; // Skip to the next slot
+        }
+
+        freeVal(idValue); // Free the value after checking
+
         rc = evalExpr(record, scan->rel->schema, scanInfo->condition, &value);
         if (rc != RC_OK)
         {
@@ -593,25 +707,29 @@ extern int getRecordSize(Schema *schema)
         return RC_ERROR;
     }
 
-    int size = 0;
+    int size = 1;
     for (int i = 0; i < schema->numAttr; i++)
     {
         switch (schema->dataTypes[i])
         {
         case DT_INT:
-            size += sizeof(int);
+            size += SIZE_INT;
             break;
         case DT_STRING:
             size += schema->typeLength[i];
             break;
         case DT_FLOAT:
-            size += sizeof(float);
+            size += SIZE_FLOAT;
             break;
         case DT_BOOL:
             size += sizeof(bool);
             break;
         default:
             return RC_RM_UNKOWN_DATATYPE;
+        }
+        if (i < schema->numAttr - 1)
+        {
+            size += 1; // Add 1 for the comma delimiter between attributes
         }
     }
     return size;
@@ -635,7 +753,7 @@ RC freeSchema(Schema *schema)
 
 Schema *createSchema(int numAttr, char **attrNames, DataType *dataTypes, int *typeLength, int keySize, int *keys)
 {
-    if (numAttr <= 0 || attrNames == NULL || dataTypes == NULL || typeLength == NULL || keySize < 0 || keys == NULL)
+    if (numAttr <= 0 || attrNames == NULL || dataTypes == NULL || typeLength == NULL || (keySize < 0 && keys == NULL))
     {
         return NULL;
     }
@@ -737,10 +855,10 @@ RC getAttr(Record *record, Schema *schema, int attrNum, Value **value)
         switch (schema->dataTypes[i])
         {
         case DT_INT:
-            offset += sizeof(int);
+            offset += SIZE_INT;
             break;
         case DT_FLOAT:
-            offset += sizeof(float);
+            offset += SIZE_FLOAT;
             break;
         case DT_BOOL:
             offset += sizeof(bool);
