@@ -31,4 +31,11 @@ interactiveInterface.o: InteractiveInterface.c record_mgr.h
 clean:
 	rm -f test_assign3_1 test_expr io *.o *.bin
 
-.PHONY: all clean
+# New targets
+test3: test_assign3_1
+	./test_assign3_1
+
+ii: io
+	./io
+
+.PHONY: all clean test3 ii

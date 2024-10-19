@@ -123,14 +123,17 @@ void createTableInterface()
 
 void insertRecordInterface(RM_TableData *table)
 {
+    // Check if a table is selected
     if (tableName[0] == '\0')
     {
+        // Prompt user to use existing table or create a new one
         char useExisting;
         printf("No table currently selected. Do you want to use an existing table? (y/n): ");
         scanf(" %c", &useExisting);
 
         if (useExisting == 'y' || useExisting == 'Y')
         {
+            // Get existing table name
             printf("Enter the name of the existing table: ");
             scanf("%s", tableName);
         }
@@ -147,26 +150,32 @@ void insertRecordInterface(RM_TableData *table)
         return;
     }
 
+    // Open the table
     RC rc = openTable(table, tableName);
     if (rc != RC_OK)
     {
         printf("Error: Unable to open table '%s'. Error code: %d\n", tableName, rc);
         return;
     }
+
+    // Create a new record
     Record *record;
     createRecord(&record, table->schema);
 
     char *recordData = record->data;
     int offset = 0;
 
+    // Input values for each attribute
     for (int i = 0; i < table->schema->numAttr; i++)
     {
+        // Prompt user for input based on data type
         Value *value = (Value *)malloc(sizeof(Value));
         char input[100];
         int valid_input = 0;
-
+        // Loop until valid input is received
         while (!valid_input)
         {
+            // Prompt user for input based on data type
             if (table->schema->dataTypes[i] == DT_FLOAT)
             {
                 printf("Enter new value for %s maximum 6 characters: ", table->schema->attrNames[i]);
@@ -186,6 +195,7 @@ void insertRecordInterface(RM_TableData *table)
 
             scanf("%99s", input);
 
+            // Validate and store input based on data type
             switch (table->schema->dataTypes[i])
             {
             case DT_INT:
@@ -254,6 +264,7 @@ void insertRecordInterface(RM_TableData *table)
         free(value);
     }
 
+    // Insert the record
     rc = insertRecord(table, record);
     if (rc == RC_OK)
     {
@@ -265,6 +276,7 @@ void insertRecordInterface(RM_TableData *table)
         printf("Error inserting record: %d\n", rc);
     }
 
+    // Clean up
     freeRecord(record);
     closeTable(table);
 }
@@ -334,6 +346,7 @@ Value *selectAttributeAndGetValue(RM_TableData *table, int *selectedAttr)
 
 void updateRecordInterface(RM_TableData *table)
 {
+    // Check if a table is selected
     if (tableName[0] == '\0')
     {
         char useExisting;
@@ -357,6 +370,7 @@ void updateRecordInterface(RM_TableData *table)
         }
     }
 
+    // Open the table
     RC rc = openTable(table, tableName);
     if (rc != RC_OK)
     {
@@ -364,6 +378,7 @@ void updateRecordInterface(RM_TableData *table)
         return;
     }
 
+    // Get search attribute and value from user
     int searchAttrNum;
     Value *searchValue = selectAttributeAndGetValue(table, &searchAttrNum);
     if (searchValue == NULL)
@@ -372,6 +387,7 @@ void updateRecordInterface(RM_TableData *table)
         return;
     }
 
+    // Set up scan condition
     RM_ScanHandle scanHandle;
     Expr *condition = NULL, *left, *right;
     MAKE_CONS(left, searchValue);
@@ -387,6 +403,7 @@ void updateRecordInterface(RM_TableData *table)
         return;
     }
 
+    // Create record for scanning
     Record *record = (Record *)malloc(sizeof(Record));
     createRecord(&record, table->schema);
 
@@ -455,12 +472,14 @@ void updateRecordInterface(RM_TableData *table)
         }
         free(recordData);
 
+        // Ask user if they want to update this record
         char updateChoice;
         printf("Do you want to update this record? (y/n): ");
         scanf(" %c", &updateChoice);
 
         if (updateChoice == 'y' || updateChoice == 'Y')
         {
+            // Update record
             char *recordData = record->data;
             int offset = 0;
             for (int i = 0; i < table->schema->numAttr; i++)
@@ -548,6 +567,7 @@ void updateRecordInterface(RM_TableData *table)
                 }
             }
 
+            // Perform update
             rc = updateRecord(table, record);
             if (rc == RC_OK)
             {
@@ -573,6 +593,7 @@ void updateRecordInterface(RM_TableData *table)
         printf("No matching records found.\n");
     }
 
+    // Clean up
     closeScan(&scanHandle);
     freeRecord(record);
     freeVal(searchValue);
@@ -581,12 +602,14 @@ void updateRecordInterface(RM_TableData *table)
 
 void printValue(Value *value)
 {
+    // Check if value is NULL
     if (value == NULL)
     {
         printf("NULL");
         return;
     }
 
+    // Print value based on its data type
     switch (value->dt)
     {
     case DT_INT:
@@ -608,6 +631,7 @@ void printValue(Value *value)
 
 void deleteRecordInterface(RM_TableData *table)
 {
+    // Check if a table is selected
     if (tableName[0] == '\0')
     {
         char useExisting;
@@ -631,6 +655,7 @@ void deleteRecordInterface(RM_TableData *table)
         }
     }
 
+    // Open the table
     RC rc = openTable(table, tableName);
     if (rc != RC_OK)
     {
@@ -638,6 +663,7 @@ void deleteRecordInterface(RM_TableData *table)
         return;
     }
 
+    // Get search attribute and value from user
     int searchAttrNum;
     Value *searchValue = selectAttributeAndGetValue(table, &searchAttrNum);
     if (searchValue == NULL)
@@ -646,12 +672,14 @@ void deleteRecordInterface(RM_TableData *table)
         return;
     }
 
+    // Set up scan condition
     RM_ScanHandle scanHandle;
     Expr *condition = NULL, *left, *right;
     MAKE_CONS(left, searchValue);
     MAKE_ATTRREF(right, searchAttrNum);
     MAKE_BINOP_EXPR(condition, left, right, OP_COMP_EQUAL);
 
+    // Start scan
     rc = startScan(table, &scanHandle, condition);
     if (rc != RC_OK)
     {
@@ -661,6 +689,7 @@ void deleteRecordInterface(RM_TableData *table)
         return;
     }
 
+    // Create record for scanning
     Record *record = (Record *)malloc(sizeof(Record));
     createRecord(&record, table->schema);
 
@@ -670,8 +699,9 @@ void deleteRecordInterface(RM_TableData *table)
         // Check if the record is valid (not deleted)
         if (record->data[0] == '\0') // Assuming '\0' indicates a deleted record
         {
-            continue; // Skip this record
+            continue;
         }
+        // Display current record values
         recordFound = true;
         printf("Found matching record. Current values:\n");
 
@@ -730,11 +760,13 @@ void deleteRecordInterface(RM_TableData *table)
         free(recordData);
 
         char deleteChoice;
+        // Ask user if they want to delete this record
         printf("Do you want to delete this record? (y/n): ");
         scanf(" %c", &deleteChoice);
 
         if (deleteChoice == 'y' || deleteChoice == 'Y')
         {
+            // Delete the record
             rc = deleteRecord(table, record->id);
             if (rc == RC_OK)
             {
@@ -760,6 +792,7 @@ void deleteRecordInterface(RM_TableData *table)
         printf("No matching records found.\n");
     }
 
+    // Clean up
     closeScan(&scanHandle);
     freeRecord(record);
     freeVal(searchValue);
@@ -768,23 +801,29 @@ void deleteRecordInterface(RM_TableData *table)
 
 int stringCompare(Value *left, Value *right)
 {
+    // Get string values from Value structs
     char *leftStr = left->v.stringV;
     char *rightStr = right->v.stringV;
 
-    // Trim trailing spaces from both strings
+    // Get initial lengths of strings
     int leftLen = strlen(leftStr);
     int rightLen = strlen(rightStr);
 
+    // Trim trailing spaces from left string
     while (leftLen > 0 && leftStr[leftLen - 1] == ' ')
         leftLen--;
+
+    // Trim trailing spaces from right string
     while (rightLen > 0 && rightStr[rightLen - 1] == ' ')
         rightLen--;
 
+    // Compare trimmed strings up to the length of the shorter string
     return strncmp(leftStr, rightStr, (leftLen < rightLen) ? leftLen : rightLen);
 }
 
 void executeScanInterface(RM_TableData *table)
 {
+    // Check if a table is selected, if not, prompt user to select one
     if (tableName[0] == '\0')
     {
         char useExisting;
@@ -808,6 +847,7 @@ void executeScanInterface(RM_TableData *table)
         }
     }
 
+    // Open the selected table
     RC rc = openTable(table, tableName);
     if (rc != RC_OK)
     {
@@ -815,6 +855,7 @@ void executeScanInterface(RM_TableData *table)
         return;
     }
 
+    // Initialize scan variables
     RM_ScanHandle scanHandle;
     Expr *condition = NULL;
     Expr *left = NULL;
@@ -824,6 +865,7 @@ void executeScanInterface(RM_TableData *table)
     int opType;
     Value *val = (Value *)malloc(sizeof(Value));
 
+    // Check if memory allocation was successful
     if (val == NULL)
     {
         printf("Memory allocation failed for Value!\n");
@@ -859,6 +901,7 @@ void executeScanInterface(RM_TableData *table)
 
     val->dt = table->schema->dataTypes[attrNum];
 
+    // Get condition value from user based on attribute type
     switch (val->dt)
     {
     case DT_INT:
@@ -934,7 +977,7 @@ void executeScanInterface(RM_TableData *table)
         int attrNum2;
         Value *val2 = (Value *)malloc(sizeof(Value));
 
-        printf("Enter attribute number for second condition (0 to 4): ");
+        printf("Enter attribute number for second condition: ");
         scanf("%d", &attrNum2);
 
         if (attrNum2 < 0 || attrNum2 >= table->schema->numAttr)
@@ -1049,6 +1092,7 @@ void executeScanInterface(RM_TableData *table)
         return;
     }
 
+    // Allocate memory for record
     Record *record = (Record *)malloc(sizeof(Record));
     if (record == NULL)
     {
@@ -1068,6 +1112,7 @@ void executeScanInterface(RM_TableData *table)
         return;
     }
 
+    // Scan and display matching records
     bool recordsFound = false;
     while (next(&scanHandle, record) != RC_RM_NO_MORE_TUPLES)
     {
@@ -1132,13 +1177,15 @@ void executeScanInterface(RM_TableData *table)
             printf("\n");
         }
         free(recordData);
-        printf("\n"); // Add a newline between records
+        printf("\n");
     }
 
     if (!recordsFound)
     {
+        // Display message if no records found
         printf("No records found matching the condition.\n");
     }
+    // Clean up
     closeScan(&scanHandle);
     freeRecord(record);
     free(val);
@@ -1147,6 +1194,7 @@ void executeScanInterface(RM_TableData *table)
 
 void showAllRecordsInterface(RM_TableData *table)
 {
+    // Check if a table is selected, if not, prompt user to select one
     if (tableName[0] == '\0')
     {
         char useExisting;
@@ -1164,6 +1212,7 @@ void showAllRecordsInterface(RM_TableData *table)
         }
     }
 
+    // Open the selected table
     RC rc = openTable(table, tableName);
     if (rc != RC_OK)
     {
@@ -1171,6 +1220,7 @@ void showAllRecordsInterface(RM_TableData *table)
         return;
     }
 
+    // Allocate memory for scan handle
     RM_ScanHandle *scanHandle = (RM_ScanHandle *)malloc(sizeof(RM_ScanHandle));
     if (scanHandle == NULL)
     {
@@ -1198,6 +1248,7 @@ void showAllRecordsInterface(RM_TableData *table)
         return;
     }
 
+    // Allocate memory for record
     Record *record = (Record *)malloc(sizeof(Record));
     if (record == NULL)
     {
@@ -1223,6 +1274,7 @@ void showAllRecordsInterface(RM_TableData *table)
         return;
     }
 
+    // Scan and display all records
     int recordCount = 0;
     while ((rc = next(scanHandle, record)) == RC_OK)
     {
@@ -1234,6 +1286,7 @@ void showAllRecordsInterface(RM_TableData *table)
         recordCount++;
         printf("Record %d:\n", recordCount);
 
+        // Display record information
         char *recordData = strdup(record->data);
         if (recordData == NULL)
         {
@@ -1295,6 +1348,7 @@ void showAllRecordsInterface(RM_TableData *table)
         printf("Error during scan. RC: %d\n", rc);
     }
 
+    // Display total record count
     if (recordCount == 0)
     {
         printf("No records found in the table.\n");
@@ -1304,6 +1358,7 @@ void showAllRecordsInterface(RM_TableData *table)
         printf("Total records: %d\n", recordCount);
     }
 
+    // Clean up
     freeRecord(record);
     free(condition->expr.cons);
     free(condition);
