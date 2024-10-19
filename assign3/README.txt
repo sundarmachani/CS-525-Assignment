@@ -1,8 +1,16 @@
-# Assignment - 3
+                                                        Advanced Database Organization - Fall 2024
+                                                                CS 525 - Group 39
+                                                        Programming Assignment 3: record Manager
+Authors
+---------------------------------------------------------------------------------------------------------------------------------------------
+                        Group - 39 
+Sundar Machani (smachani@hawk.iit.edu) - A20554747
+Dhruvi Pancholi (dpancholi1@hawk.iit.edu) - A20545574
+Ruthwik Dhaipulle (rdhaipulle@hawk.iit.edu) - A20548196
 
-## Record Manager
 
-#### HOW TO EXECUTE THE SCRIPT
+HOW TO EXECUTE THE SCRIPT
+---------------------------------------------------------------------------------------------------------------------------------------------
 
 1. Open terminal 
 
@@ -16,12 +24,10 @@
 
 4. To remove object files run the command "make clean"
 
-Note: Change rm to del for make clean in make file for windows. 
-
-## Overview of the Assignment:
-
-
-### Record Manager Functions:
+Overview of the Assignment:
+---------------------------------------------------------------------------------------------------------------------------------------------
+Record Manager Functions:
+---------------------------------------------------------------------------------------------------------------------------------------------
 1. initRecordManager():
     - Initializes the record manager by calling the initStorageManager function.
     - Returns RC_OK if the initialization is successful.
