@@ -10,30 +10,29 @@
 #define MAX_KEYS 100
 #define NUM_OF_PAGES 10
 
-// Structure representing a node in the index tree
+// Struct for node in Index Tree
 typedef struct IndexTree
 {
-    // Number of keys currently stored in this node
+    // No. of keys stored in this node
     int keyCount;
-    // Maximum number of keys that can be stored in a node
+    // Max no. of keys that can be stored in a node
     int maxKeysPerNode;
-    // Total number of nodes in the tree
+    // Total no. of nodes in the tree
     int nodeCount;
-    // Record identifier (page and slot) for the indexed record
+    // Record identifier, slot and page, the indexed record
     struct RID rid;
-    // Value stored in the node (can be int, float, string, or bool)
+    // Value stored in  node, can be either int, float, string, or bool
     struct Value value;
-    // Buffer pool for managing page access
+    // Buffer pool - page access
     BM_BufferPool *bufferPool;
-    // Handle for accessing page data
+    // Handle to access page data
     BM_PageHandle *pageHandle;
 } IndexTree;
 
-// Global Variables
 
-// Total number of keys across all nodes in the tree
+// Total keys throughout all nodes in the tree
 int totalKeyCount;
-// Current position during tree scanning operations
+// Current position during tree scanning 
 int currentScanPosition;
 // Array of pointers to IndexTree nodes
 IndexTree **indexTreeArray;
@@ -55,33 +54,34 @@ static void removeTrailingComma(char *str);
 
 RC initIndexManager(void *mgmtData)
 {
-    // Nothing for intialization
+    // nothing for init
     return RC_OK;
 }
 
 RC shutdownIndexManager()
 {
-    // freeing each element in indexTreeArray
+    // free each element in indexTreeArray
     for (int i = 0; i < totalKeyCount; i++)
     {
         free(indexTreeArray[i]);
     }
-    // at the end free whole indexTreeArray
+    // free whole IndexTreeArray at the end
     free(indexTreeArray);
     return RC_OK;
 }
 
-// Creates a new B-tree index file with specified parameters
+// Creates a new B-tree index file
 RC createBtree(char *idxId, DataType keyType, int n)
 {
-    // Initialize file handling structures
+    // Initialize file handling structs
     SM_FileHandle fileHandle;
-    SM_PageHandle pageBuffer = malloc(PAGE_SIZE * sizeof(char));
+    size_t chSize = sizeof(char);
+    SM_PageHandle pageBuffer = malloc(PAGE_SIZE * chSize);
 
     if (!pageBuffer)
         return RC_MEM_ALLOC_FAILURE;
 
-    // Create and open the index file
+    // Create, open the index file
     RC status = createPageFile(idxId);
     if (status != RC_OK)
     {
@@ -96,7 +96,7 @@ RC createBtree(char *idxId, DataType keyType, int n)
         return status;
     }
 
-    // Ensure the file has at least one page
+    // Ensure file has at least 1 page
     status = ensureCapacity(1, &fileHandle);
     if (status != RC_OK)
     {
@@ -105,7 +105,7 @@ RC createBtree(char *idxId, DataType keyType, int n)
         return status;
     }
 
-    // Allocate memory for the index tree array
+    // Allocate memory for  index tree array
     indexTreeArray = malloc(sizeof(IndexTree *) * MAX_KEYS);
     if (!indexTreeArray)
     {
@@ -114,13 +114,13 @@ RC createBtree(char *idxId, DataType keyType, int n)
         return RC_MEM_ALLOC_FAILURE;
     }
 
-    // Allocate memory for each tree node
+    // Allocate memory for each node in the tree
     for (int treeIndex = 0; treeIndex < MAX_KEYS; treeIndex++)
     {
         indexTreeArray[treeIndex] = malloc(sizeof(IndexTree));
         if (!indexTreeArray[treeIndex])
         {
-            // Clean up on allocation failure
+            // Clean up when allocation fails
             for (int freeIndex = 0; freeIndex < treeIndex; freeIndex++)
                 free(indexTreeArray[freeIndex]);
             free(indexTreeArray);
@@ -130,12 +130,12 @@ RC createBtree(char *idxId, DataType keyType, int n)
         }
     }
 
-    // Write the maximum keys per node to the first page
+    // Write max keys per node to the first page
     *((int *)pageBuffer) = n;
     status = writeCurrentBlock(&fileHandle, pageBuffer);
     if (status != RC_OK)
     {
-        // Clean up on write failure
+        // Clean up when write fails
         for (int freeIndex = 0; freeIndex < MAX_KEYS; freeIndex++)
             free(indexTreeArray[freeIndex]);
         free(indexTreeArray);
@@ -144,11 +144,11 @@ RC createBtree(char *idxId, DataType keyType, int n)
         return status;
     }
 
-    // Close the file and initialize counters
+    // Close file, init counters
     status = closePageFile(&fileHandle);
     if (status != RC_OK)
     {
-        // Clean up on close failure
+        // Clean up when close fails
         for (int freeIndex = 0; freeIndex < MAX_KEYS; freeIndex++)
             free(indexTreeArray[freeIndex]);
         free(indexTreeArray);
@@ -156,7 +156,7 @@ RC createBtree(char *idxId, DataType keyType, int n)
         return status;
     }
 
-    // Initialize global counters
+    // global counters 
     totalKeyCount = 0;
     currentScanPosition = 0;
     free(pageBuffer);
@@ -164,10 +164,10 @@ RC createBtree(char *idxId, DataType keyType, int n)
     return RC_OK;
 }
 
-// Opens an existing B-tree index file
+// Opens existing B-tree index file
 RC openBtree(BTreeHandle **tree, char *idxId)
 {
-    // Open the index file
+    // Open index file
     SM_FileHandle fileHandle;
     RC status = openPageFile(idxId, &fileHandle);
     if (status != RC_OK)
@@ -181,7 +181,7 @@ RC openBtree(BTreeHandle **tree, char *idxId)
         return RC_MEM_ALLOC_FAILURE;
     }
 
-    // Copy the index ID
+    // Copy index ID
     (*tree)->idxId = strdup(idxId);
     if (!(*tree)->idxId)
     {
@@ -225,7 +225,7 @@ RC openBtree(BTreeHandle **tree, char *idxId)
         return status;
     }
 
-    // Pin the first page to read max keys per node
+    // Pin first page to read max keys per node
     status = pinPage(treeData->bufferPool, treeData->pageHandle, 1);
     if (status != RC_OK)
     {
@@ -244,7 +244,7 @@ RC openBtree(BTreeHandle **tree, char *idxId)
     treeData->nodeCount = 0;
     (*tree)->mgmtData = treeData;
 
-    // Unpin the page and close file
+    // Unpin page, close file
     status = unpinPage(treeData->bufferPool, treeData->pageHandle);
     if (status != RC_OK)
     {
@@ -261,7 +261,7 @@ RC openBtree(BTreeHandle **tree, char *idxId)
     return closePageFile(&fileHandle);
 }
 
-// Closes the B-tree and frees all associated memory
+// Closes B-tree, frees all associated memory
 RC closeBtree(BTreeHandle *tree)
 {
     if (tree)
@@ -286,7 +286,7 @@ RC closeBtree(BTreeHandle *tree)
     return RC_OK;
 }
 
-// Deletes the B-tree file and frees associated memory
+// Delete B-tree file and free memory
 RC deleteBtree(char *idxId)
 {
     RC status = destroyPageFile(idxId);
@@ -309,38 +309,48 @@ RC deleteBtree(char *idxId)
     return status;
 }
 
-// Counts unique nodes in the tree by checking for duplicate pages
+// Counts unique nodes in tree by checking for duplicate pages
 RC getNumNodes(BTreeHandle *tree, int *result)
 {
-    if (!tree || !result)
+    if (!tree)
         return RC_NULL_PARAM;
-
+    if (!result)
+        return RC_NULL_PARAM;
+        
     int duplicatePageCount = 0;
-    // Count duplicate pages
     for (int currentNode = 1; currentNode < totalKeyCount; currentNode++)
     {
-        for (int previousNode = currentNode - 1; previousNode >= 0; previousNode--)
+        int previousNode = currentNode - 1;
+        while (previousNode >= 0)
         {
-            if (indexTreeArray[currentNode]->rid.page == indexTreeArray[previousNode]->rid.page)
+            int currentPage = indexTreeArray[currentNode]->rid.page;
+            int previousPage = indexTreeArray[previousNode]->rid.page;
+            if (currentPage == previousPage)
             {
                 duplicatePageCount++;
             }
+            previousNode--;
         }
     }
     *result = totalKeyCount - duplicatePageCount;
     return RC_OK;
 }
 
-// Returns the total number of entries in the tree
+
+
+// Returns  total number of entries in the tree
 RC getNumEntries(BTreeHandle *tree, int *result)
 {
-    if (!tree || !result)
+    if (!tree)
         return RC_NULL_PARAM;
+    if (!result)
+        return RC_NULL_PARAM;
+        
     *result = totalKeyCount;
     return RC_OK;
 }
 
-// Returns the data type of keys stored in the tree
+// Returns data type of keys stored in the tree
 RC getKeyType(BTreeHandle *tree, DataType *result)
 {
     if (!tree || !result)
@@ -391,8 +401,9 @@ RC findKey(BTreeHandle *tree, Value *key, RID *result)
 RC insertKey(BTreeHandle *tree, Value *key, RID rid)
 {
     // Get tree management data
+    size_t indTreesize = sizeof(IndexTree);
     IndexTree *treeData = (IndexTree *)(tree->mgmtData);
-    indexTreeArray[totalKeyCount] = malloc(sizeof(IndexTree));
+    indexTreeArray[totalKeyCount] = malloc(indTreesize);
     if (!indexTreeArray[totalKeyCount])
         return RC_MEM_ALLOC_FAILURE;
 
@@ -415,27 +426,36 @@ RC insertKey(BTreeHandle *tree, Value *key, RID rid)
 // Handles insertion of the first key in the tree
 static RC insertFirstKey(IndexTree *treeData, Value *key, RID rid)
 {
-    // Pin the page for writing
-    RC status = pinPage(treeData->bufferPool, treeData->pageHandle, totalKeyCount);
-    if (status != RC_OK)
+    char *PAGE_STATUS = "NotFull";
+    RC status;
+    
+    // Pin and prepare page
+    status = pinPage(treeData->bufferPool, treeData->pageHandle, totalKeyCount);
+    if (status != RC_OK) {
         return status;
-
-    // Mark page as modified and not full
-    markDirty(treeData->bufferPool, treeData->pageHandle);
-    treeData->pageHandle->data = "NotFull";
-
-    // Set key value and RID
-    status = setKeyValue(indexTreeArray[totalKeyCount], key);
-    if (status != RC_OK)
-    {
+    }
+    
+    // Mark page as modified
+    status = markDirty(treeData->bufferPool, treeData->pageHandle);
+    if (status != RC_OK) {
         unpinPage(treeData->bufferPool, treeData->pageHandle);
         return status;
     }
-
-    // Update tree data
-    indexTreeArray[totalKeyCount]->rid = rid;
+    treeData->pageHandle->data = PAGE_STATUS;
+    
+    // Insert new key
+    IndexTree *newNode = indexTreeArray[totalKeyCount];
+    status = setKeyValue(newNode, key);
+    if (status != RC_OK) {
+        unpinPage(treeData->bufferPool, treeData->pageHandle);
+        return status;
+    }
+    
+    // Update node data
+    newNode->rid = rid;
     totalKeyCount++;
-
+    
+    // Release page 
     return unpinPage(treeData->bufferPool, treeData->pageHandle);
 }
 
@@ -496,27 +516,30 @@ static RC insertNewKey(IndexTree *treeData, Value *key, RID rid)
 static RC setKeyValue(IndexTree *node, Value *key)
 {
     node->value.dt = key->dt;
-    // Handle different data types
+
     switch (key->dt)
     {
     case DT_INT:
         node->value.v.intV = key->v.intV;
-        break;
+        return RC_OK;
+        
     case DT_FLOAT:
         node->value.v.floatV = key->v.floatV;
-        break;
+        return RC_OK;
+        
     case DT_STRING:
-        node->value.v.stringV = strdup(key->v.stringV);
-        if (!node->value.v.stringV)
+        if (!(node->value.v.stringV = strdup(key->v.stringV))) {
             return RC_MEM_ALLOC_FAILURE;
-        break;
+        }
+        return RC_OK;
+        
     case DT_BOOL:
         node->value.v.boolV = key->v.boolV;
-        break;
+        return RC_OK;
+        
     default:
         return RC_RM_NO_PRINT_FOR_DATATYPE;
     }
-    return RC_OK;
 }
 
 // Compares two keys of the same data type, returns -1 (less), 0 (equal), or 1 (greater)
@@ -573,14 +596,25 @@ RC deleteKey(BTreeHandle *tree, Value *key)
 // Updates page status after key deletion
 static RC updatePageStatus(IndexTree *treeData, int keyIndex)
 {
-    // Pin the page containing the key
-    RC status = pinPage(treeData->bufferPool, treeData->pageHandle, (keyIndex / treeData->maxKeysPerNode));
-    if (status != RC_OK)
+    const int pageNum = keyIndex / treeData->maxKeysPerNode;
+    char *PAGE_STATUS = "NOT_FULL";
+    RC status;
+    
+    // Pin the target page
+    status = pinPage(treeData->bufferPool, treeData->pageHandle, pageNum);
+    if (status != RC_OK) {
         return status;
-
-    // Update page status and unpin
-    treeData->pageHandle->data = "NOT_FULL";
-    markDirty(treeData->bufferPool, treeData->pageHandle);
+    }
+    
+    //  Update page content
+    treeData->pageHandle->data = PAGE_STATUS;
+    status = markDirty(treeData->bufferPool, treeData->pageHandle);
+    if (status != RC_OK) {
+        unpinPage(treeData->bufferPool, treeData->pageHandle);
+        return status;
+    }
+    
+    // Release the page
     return unpinPage(treeData->bufferPool, treeData->pageHandle);
 }
 
@@ -670,20 +704,26 @@ static int compareKeysForSort(int firstIndex, int secondIndex, DataType keyType)
 // Swaps two keys in the tree
 static void swapKeys(int firstIndex, int secondIndex)
 {
-    Value tempValue = indexTreeArray[firstIndex]->value;
-    RID tempRid = indexTreeArray[firstIndex]->rid;
-    indexTreeArray[firstIndex]->value = indexTreeArray[secondIndex]->value;
-    indexTreeArray[firstIndex]->rid = indexTreeArray[secondIndex]->rid;
-    indexTreeArray[secondIndex]->value = tempValue;
-    indexTreeArray[secondIndex]->rid = tempRid;
+    struct IndexTree* first = indexTreeArray[firstIndex];
+    struct IndexTree* second = indexTreeArray[secondIndex];
+    
+    Value tempValue = first->value;
+    RID tempRid = first->rid;
+    
+    first->value = second->value;
+    first->rid = second->rid;
+    
+    second->value = tempValue;
+    second->rid = tempRid;
 }
 
 // Returns the next entry in the tree scan
 RC nextEntry(BT_ScanHandle *handle, RID *result)
 {
-    if (!handle || !result)
+    if (!handle)
         return RC_NULL_PARAM;
-
+    if (!result)
+        return RC_NULL_PARAM;
     // Check if there are more entries to scan
     if (handle->currentPosition < totalKeyCount)
     {
@@ -745,7 +785,7 @@ char *printTree(BTreeHandle *tree)
     for (int index = 0; index < totalKeyCount; index++)
     {
         // Handle node boundaries
-        if (index % compareValue == 0 && index != 0)
+        if (index != 0 && index % compareValue == 0)
         {
             appendToString(operationString, "%d,%d,",
                            indexTreeArray[index]->value.v.intV,
